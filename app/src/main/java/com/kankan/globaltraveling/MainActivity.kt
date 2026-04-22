@@ -71,7 +71,6 @@ fun DynamicPermissionRequester(viewModel: MainViewModel) {
     val permissionState = rememberMultiplePermissionsState(permissions)
     val shouldRequest by viewModel.requestPermissions.collectAsStateWithLifecycle()
 
-    // 当 shouldRequest 变为 true 时发起权限请求
     LaunchedEffect(shouldRequest) {
         if (shouldRequest && !permissionState.allPermissionsGranted) {
             permissionState.launchMultiplePermissionRequest()
@@ -79,7 +78,6 @@ fun DynamicPermissionRequester(viewModel: MainViewModel) {
         }
     }
 
-    // 监听权限授予结果
     LaunchedEffect(permissionState.allPermissionsGranted) {
         if (permissionState.allPermissionsGranted) {
             viewModel.onPermissionsGranted()

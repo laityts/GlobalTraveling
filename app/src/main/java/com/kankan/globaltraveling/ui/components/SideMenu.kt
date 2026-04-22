@@ -121,7 +121,7 @@ fun SideMenu(
                         Column(Modifier.padding(12.dp)) {
                             Text("⚠️ Xposed 设置", style = MaterialTheme.typography.labelMedium)
                             Spacer(Modifier.height(4.dp))
-                            Text("请在 Xposed 模块中勾选「系统框架」(Android System) 「目标应用」以确保 Hook 生效", style = MaterialTheme.typography.bodySmall)
+                            Text("请在 Xposed 模块中勾选「系统框架」和「目标应用」以确保 Hook 生效", style = MaterialTheme.typography.bodySmall)
                         }
                     }
                 }

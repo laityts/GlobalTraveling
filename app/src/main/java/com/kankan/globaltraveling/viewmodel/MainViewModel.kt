@@ -18,13 +18,13 @@ import com.kankan.globaltraveling.App
 import com.kankan.globaltraveling.SimulationForegroundService
 import com.kankan.globaltraveling.data.LocationData
 import com.kankan.globaltraveling.data.LocationRepository
+import com.kankan.globaltraveling.utils.LocationHelper
 import com.kankan.globaltraveling.utils.Logger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import java.util.*
 import kotlin.coroutines.resume
@@ -52,7 +52,6 @@ class MainViewModel : ViewModel() {
     private val _autoUpdateOnSelect = MutableStateFlow(prefs.getBoolean("auto_update", true))
     val autoUpdateOnSelect: StateFlow<Boolean> = _autoUpdateOnSelect.asStateFlow()
 
-    // 权限请求触发器
     private val _requestPermissions = MutableStateFlow(false)
     val requestPermissions: StateFlow<Boolean> = _requestPermissions.asStateFlow()
 
@@ -60,7 +59,6 @@ class MainViewModel : ViewModel() {
         loadFavorites()
         loadDefault()
         checkSimulationStatus()
-        // 首次启动时请求权限（如果还未授予）
         if (!hasLocationPermissions()) {
             triggerPermissionRequest()
         }
@@ -220,18 +218,18 @@ class MainViewModel : ViewModel() {
     fun moveToMyLocation() {
         if (!hasLocationPermissions()) {
             triggerPermissionRequest()
-            showToast("需要位置权限才能获取真实位置")
+            showToast("需要位置权限才能获取真实位置，请授权后重试")
             return
         }
         viewModelScope.launch {
             showToast("正在获取真实位置（请确保 GPS 已开启）...")
-            val realLocation = getRealLocationUsingGms(15000)
+            val realLocation = LocationHelper.getCurrentLocation()
             if (realLocation != null) {
                 updateSelectedLocation(realLocation.latitude, realLocation.longitude, "我的位置")
                 showToast("已定位到真实位置: ${realLocation.latitude}, ${realLocation.longitude}")
                 Logger.i("Moved to real location: ${realLocation.latitude}, ${realLocation.longitude}")
             } else {
-                showToast("无法获取真实位置。请检查：\n1. GPS 是否已开启\n2. 位置权限是否授予\n3. Google Play 服务是否可用")
+                showToast("无法获取真实位置。请检查：\n1. GPS 是否已开启\n2. 位置权限是否授予\n3. Google Play 服务是否可用（或设备支持GPS）")
                 Logger.e("Failed to get real location")
             }
         }
@@ -251,58 +249,6 @@ class MainViewModel : ViewModel() {
         _requestPermissions.value = false
     }
 
-    // 使用 Google FusedLocationProviderClient 获取真实位置（绕过 Hook）
-    private suspend fun getRealLocationUsingGms(timeoutMs: Long): Location? =
-        suspendCancellableCoroutine { continuation ->
-            if (!hasLocationPermissions()) {
-                continuation.resume(null)
-                return@suspendCancellableCoroutine
-            }
-
-            val locationManager = App.instance.getSystemService(Context.LOCATION_SERVICE) as LocationManager
-            if (!locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
-                Log.e("MainViewModel", "GPS 未开启")
-                continuation.resume(null)
-                return@suspendCancellableCoroutine
-            }
-
-            fusedLocationClient.lastLocation.addOnSuccessListener { location ->
-                if (location != null && System.currentTimeMillis() - location.time < 10000) {
-                    Log.d("MainViewModel", "使用缓存的 GMS 位置: ${location.latitude}, ${location.longitude}")
-                    continuation.resume(location)
-                    return@addOnSuccessListener
-                }
-                val locationRequest = com.google.android.gms.location.LocationRequest.Builder(
-                    com.google.android.gms.location.Priority.PRIORITY_HIGH_ACCURACY,
-                    5000
-                ).setWaitForAccurateLocation(false).build()
-                val locationCallback = object : com.google.android.gms.location.LocationCallback() {
-                    override fun onLocationResult(result: com.google.android.gms.location.LocationResult) {
-                        super.onLocationResult(result)
-                        val loc = result.lastLocation
-                        if (loc != null) {
-                            Log.d("MainViewModel", "GMS 新位置: ${loc.latitude}, ${loc.longitude}")
-                            continuation.resume(loc)
-                        } else {
-                            continuation.resume(null)
-                        }
-                        fusedLocationClient.removeLocationUpdates(this)
-                    }
-                }
-                fusedLocationClient.requestLocationUpdates(locationRequest, locationCallback, App.instance.mainLooper)
-                android.os.Handler(App.instance.mainLooper).postDelayed({
-                    if (continuation.isActive) {
-                        Log.e("MainViewModel", "GMS 定位超时")
-                        continuation.resume(null)
-                        fusedLocationClient.removeLocationUpdates(locationCallback)
-                    }
-                }, timeoutMs)
-            }.addOnFailureListener { e ->
-                Log.e("MainViewModel", "GMS 定位失败", e)
-                continuation.resume(null)
-            }
-        }
-
     private fun loadFavorites() {
         _favorites.value = repo.getFavorites()
         Logger.d("Favorites loaded, count: ${_favorites.value.size}")
@@ -320,7 +266,6 @@ class MainViewModel : ViewModel() {
         repo.ensureIdentity()
         showToast("权限已授予，可以开始使用")
         Logger.i("All required permissions granted")
-        // 如果权限刚刚授予，可以尝试重新获取位置（可选）
     }
 
     fun showToast(message: String) {
