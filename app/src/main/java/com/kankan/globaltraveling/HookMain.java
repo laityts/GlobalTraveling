@@ -343,6 +343,29 @@ public class HookMain implements IXposedHookLoadPackage {
         });
         XposedHelpers.findAndHookMethod(TelephonyManager.class, "getSimState", XC_MethodReplacement.returnConstant(TelephonyManager.SIM_STATE_ABSENT));
 
+        // -------- 屏蔽异步基站信息请求 (Android 10+) ----------
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            try {
+                XposedHelpers.findAndHookMethod(TelephonyManager.class, "requestCellInfoUpdate",
+                        Executor.class, TelephonyManager.CellInfoCallback.class, new XC_MethodHook() {
+                            @Override
+                            protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                                if (getCoord() != null) {
+                                    Executor ex = (Executor) param.args[0];
+                                    TelephonyManager.CellInfoCallback cb = (TelephonyManager.CellInfoCallback) param.args[1];
+                                    if (ex != null && cb != null) {
+                                        ex.execute(() -> cb.onCellInfo(new ArrayList<CellInfo>()));
+                                    }
+                                    param.setResult(null);
+                                }
+                            }
+                        });
+                logToFile("requestCellInfoUpdate hooked (API 29+)");
+            } catch (Throwable t) {
+                logToFile("requestCellInfoUpdate hook failed: " + t.getMessage());
+            }
+        }
+
         // -------- GNSS 卫星数伪造 ----------
         if (Build.VERSION.SDK_INT >= 24) {
             XposedHelpers.findAndHookMethod(GnssStatus.class, "getSatelliteCount", new XC_MethodHook() {
