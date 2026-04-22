@@ -8,7 +8,6 @@ import android.location.Address
 import android.location.Geocoder
 import android.location.Location
 import android.location.LocationManager
-import android.util.Log
 import androidx.core.app.ActivityCompat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -27,7 +26,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.*
-import kotlin.coroutines.resume
 
 class MainViewModel : ViewModel() {
     private val repo = LocationRepository()
@@ -132,7 +130,7 @@ class MainViewModel : ViewModel() {
 
     fun startSimulation() {
         val loc = _selectedLocation.value
-        if (loc.lat == 0.0 && loc.lng == 0.0) {
+        if (loc.lat == 0.0 || loc.lng == 0.0) {
             showToast("请先选择有效位置")
             return
         }
@@ -215,6 +213,43 @@ class MainViewModel : ViewModel() {
         Logger.i("Favorite removed: $name")
     }
 
+    /**
+     * WGS-84 转 GCJ-02 火星坐标系 (中国标准)
+     * 来源: https://github.com/wandergis/coordTransform_py/blob/master/coordTransform_utils.py
+     */
+    private fun wgs84ToGcj02(lat: Double, lng: Double): Pair<Double, Double> {
+        val a = 6378245.0
+        val ee = 0.00669342162296594323
+
+        fun transformLat(x: Double, y: Double): Double {
+            var ret = -100.0 + 2.0 * x + 3.0 * y + 0.2 * y * y + 0.1 * x * y + 0.2 * Math.sqrt(Math.abs(x))
+            ret += (20.0 * Math.sin(6.0 * x * Math.PI) + 20.0 * Math.sin(2.0 * x * Math.PI)) * 2.0 / 3.0
+            ret += (20.0 * Math.sin(y * Math.PI) + 40.0 * Math.sin(y / 3.0 * Math.PI)) * 2.0 / 3.0
+            ret += (160.0 * Math.sin(y / 12.0 * Math.PI) + 320.0 * Math.sin(y * Math.PI / 30.0)) * 2.0 / 3.0
+            return ret
+        }
+
+        fun transformLng(x: Double, y: Double): Double {
+            var ret = 300.0 + x + 2.0 * y + 0.1 * x * x + 0.1 * x * y + 0.1 * Math.sqrt(Math.abs(x))
+            ret += (20.0 * Math.sin(6.0 * x * Math.PI) + 20.0 * Math.sin(2.0 * x * Math.PI)) * 2.0 / 3.0
+            ret += (20.0 * Math.sin(x * Math.PI) + 40.0 * Math.sin(x / 3.0 * Math.PI)) * 2.0 / 3.0
+            ret += (150.0 * Math.sin(x / 12.0 * Math.PI) + 300.0 * Math.sin(x / 30.0 * Math.PI)) * 2.0 / 3.0
+            return ret
+        }
+
+        var dLat = transformLat(lng - 105.0, lat - 35.0)
+        var dLng = transformLng(lng - 105.0, lat - 35.0)
+        val radLat = lat / 180.0 * Math.PI
+        var magic = Math.sin(radLat)
+        magic = 1 - ee * magic * magic
+        val sqrtMagic = Math.sqrt(magic)
+        dLat = (dLat * 180.0) / ((a * (1 - ee)) / (magic * sqrtMagic) * Math.PI)
+        dLng = (dLng * 180.0) / (a / sqrtMagic * Math.cos(radLat) * Math.PI)
+        val mgLat = lat + dLat
+        val mgLng = lng + dLng
+        return Pair(mgLat, mgLng)
+    }
+
     fun moveToMyLocation() {
         if (!hasLocationPermissions()) {
             triggerPermissionRequest()
@@ -225,9 +260,11 @@ class MainViewModel : ViewModel() {
             showToast("正在获取真实位置（请确保 GPS 已开启）...")
             val realLocation = LocationHelper.getCurrentLocation()
             if (realLocation != null) {
-                updateSelectedLocation(realLocation.latitude, realLocation.longitude, "我的位置")
-                showToast("已定位到真实位置: ${realLocation.latitude}, ${realLocation.longitude}")
-                Logger.i("Moved to real location: ${realLocation.latitude}, ${realLocation.longitude}")
+                // 将 WGS-84 坐标转换为高德使用的 GCJ-02 坐标，避免偏移
+                val (gcjLat, gcjLng) = wgs84ToGcj02(realLocation.latitude, realLocation.longitude)
+                updateSelectedLocation(gcjLat, gcjLng, "我的位置")
+                showToast("已定位到真实位置: ${String.format("%.6f", gcjLat)}, ${String.format("%.6f", gcjLng)}")
+                Logger.i("Moved to real location (WGS84→GCJ02): $gcjLat, $gcjLng")
             } else {
                 showToast("无法获取真实位置。请检查：\n1. GPS 是否已开启\n2. 位置权限是否授予\n3. Google Play 服务是否可用（或设备支持GPS）")
                 Logger.e("Failed to get real location")
